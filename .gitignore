@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+.env
+
+# raw pulls can get large / are reproducible from the API — don't version them
+data/raw/*.json
+!data/raw/.gitkeep
