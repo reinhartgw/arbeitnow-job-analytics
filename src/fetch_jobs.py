@@ -1,11 +1,3 @@
-"""
-Step 1: fetch and inspect.
-
-Goal right now is NOT to build the pipeline. It's to see what the API
-actually returns, so the database schema in the next step is based on
-real data, not guesses.
-"""
-
 import json, time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,13 +46,14 @@ def main() -> None:
         jobs = payload.get("data", [])
 
         for job in jobs:
-            jobListings.append(JobListing(
-                job["slug"], job["company_name"], job["title"], 
-                job["description"], job["remote"], job["url"], 
-                job["tags"], job["job_types"], job["location"], job["created_at"]))
-            # jobListings.append(JobListing(**job))
+            # jobListings.append(JobListing(
+            #     job["slug"], job["company_name"], job["title"], 
+            #     job["description"], job["remote"], job["url"], 
+            #     job["tags"], job["job_types"], job["location"], job["created_at"]))
+            jobListings.append(JobListing(**job))
         
         pages_fetched += 1
+        payload["_fetched_at"] = datetime.now(timezone.utc).isoformat()
 
         RAW_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
