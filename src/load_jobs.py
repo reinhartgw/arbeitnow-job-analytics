@@ -19,5 +19,11 @@ def listFiles():
         print(f"Fetched at: {fetched_at}")
         print(f"Jobs: {job_count}")
 
+def main() -> None:
+    from clean_jobs import parse_file
+    from db import get_connection, upsert_job
+
+    
+
 if __name__ == "__main__":
     listFiles()

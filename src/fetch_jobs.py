@@ -2,6 +2,7 @@ import json, time
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
+from models import JobListing
 
 import requests
 
@@ -14,18 +15,6 @@ def fetch(url: str) -> dict:
     response.raise_for_status()  # blow up loudly if the API didn't return 200
     return response.json()
 
-@dataclass
-class JobListing:
-    slug: str
-    company_name: str
-    title: str
-    description: str
-    remote: bool
-    url: str
-    tags: list[str]
-    job_types: list[str]
-    location: str
-    created_at: int 
 
 def main() -> None:    
     jobListings: list[JobListing] = []
