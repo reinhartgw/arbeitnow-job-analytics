@@ -7,10 +7,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     url           TEXT NOT NULL,
     job_types     TEXT[],
     location      TEXT,
+    language      TEXT,
     created_at    TIMESTAMPTZ NOT NULL,
     first_seen_at TIMESTAMPTZ NOT NULL,
     last_seen_at  TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS language TEXT;
 
 CREATE TABLE IF NOT EXISTS job_tags (
     slug TEXT NOT NULL REFERENCES jobs(slug) ON DELETE CASCADE,
