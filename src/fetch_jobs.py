@@ -14,15 +14,81 @@ MAX_PAGES = 5
 PAGE_DELAY_SECONDS = 5
 REQUEST_TIMEOUT_SECONDS = 10
 
+MAX_ATTEMPTS = 4
+BACKOFF_BASE_SECONDS = 2
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
 # Field names we actually model. Anything else the API sends is recorded in the
 # raw snapshot but ignored when building JobListing objects.
 JOB_FIELDS = {f.name for f in fields(JobListing)}
 
 
+def describe(error: Exception) -> str:
+    """Readable label for an exception. Timeouts stringify to '', so fall back
+    to the class name rather than logging empty parentheses."""
+    return str(error) or type(error).__name__
+
+
+def retry_delay(attempt: int, error: Exception) -> float:
+    """Exponential backoff, but honour Retry-After when the server sends one."""
+    backoff = float(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
+
+    response = getattr(error, "response", None)
+    if response is not None:
+        header = response.headers.get("Retry-After")
+        if header:
+            try:
+                # Never retry sooner than our own backoff.
+                return max(float(header), backoff)
+            except ValueError:
+                pass  # Retry-After may be an HTTP date; backoff is good enough
+
+    return backoff
+
+
 def fetch(url: str) -> dict:
-    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
-    response.raise_for_status()  # blow up loudly if the API didn't return 200
-    return response.json()
+    """GET one page, retrying transient failures with exponential backoff.
+
+    Connection errors, timeouts, truncated JSON, 429 and 5xx are retried.
+    Any other 4xx fails immediately - a retry won't change the answer.
+    Raises the last error once attempts are exhausted.
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+
+            if response.status_code in RETRYABLE_STATUS:
+                raise requests.exceptions.HTTPError(
+                    f"{response.status_code} {response.reason}", response=response
+                )
+
+            response.raise_for_status()  # non-retryable 4xx stops here
+            return response.json()
+
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status not in RETRYABLE_STATUS:
+                raise
+            last_error = e
+
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.JSONDecodeError,
+        ) as e:
+            last_error = e
+
+        if attempt < MAX_ATTEMPTS:
+            delay = retry_delay(attempt, last_error)
+            print(
+                f"  attempt {attempt}/{MAX_ATTEMPTS} failed "
+                f"({describe(last_error)}) - retrying in {delay:.0f}s"
+            )
+            time.sleep(delay)
+
+    raise last_error
 
 
 def to_listing(job: dict) -> JobListing:
@@ -63,7 +129,8 @@ def main() -> None:
         try:
             payload = fetch(next_url)
         except requests.exceptions.RequestException as e:
-            print(f"Fetch failed on page {pages_fetched + 1}: {e}")
+            # Pages already saved stay on disk; the run just stops short.
+            print(f"Giving up on page {pages_fetched + 1}: {describe(e)}")
             break
 
         pages_fetched += 1
