@@ -7,3 +7,6 @@ venv/
 # raw pulls can get large / are reproducible from the API — don't version them
 data/raw/*.json
 !data/raw/.gitkeep
+
+# local-only Kiro working notes
+.kiro/steering/project-conventions.md
