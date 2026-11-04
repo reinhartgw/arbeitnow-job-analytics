@@ -10,3 +10,6 @@ data/raw/*.json
 
 # local-only Kiro working notes
 .kiro/steering/project-conventions.md
+
+# local-only project plan; other docs (ADRs, data dictionary) are versioned
+docs/PLAN.md
