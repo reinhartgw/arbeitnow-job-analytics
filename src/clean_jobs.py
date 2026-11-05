@@ -26,10 +26,24 @@ CLEAN_ERRORS = (KeyError, TypeError, ValueError, OverflowError, OSError)
 class ParsedSnapshot:
   jobs: list[dict]
   skipped: list[str]  # one "<slug>: <error>" line per record that couldn't be cleaned
+  file_name: str
+  run_id: str | None
+  page: int | None
+  fetched_at: datetime
 
   @property
   def seen(self) -> int:
     return len(self.jobs) + len(self.skipped)
+
+  @property
+  def meta(self) -> dict:
+    """The fields db.record_loaded_file expects."""
+    return {
+      "file_name": self.file_name,
+      "run_id": self.run_id,
+      "page": self.page,
+      "fetched_at": self.fetched_at,
+    }
 
 def strip_footer(text: str) -> str:
   return ARBEITNOW_FOOTER_RE.sub("", text).rstrip()
@@ -51,6 +65,17 @@ def resolve_fetched_at(file_path: Path, payload: dict) -> datetime:
     return datetime.strptime(match.group(1), RAW_STAMP_FORMAT).replace(tzinfo=timezone.utc)
 
   return datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+
+def resolve_run_id(file_path: Path, payload: dict) -> str | None:
+  """The run a snapshot belongs to: _run_id if recorded, else the filename
+  stamp. Each legacy snapshot was written with its own stamp, so it becomes
+  its own one-page run."""
+  recorded = payload.get("_run_id")
+  if recorded:
+    return recorded
+
+  match = RAW_STAMP_RE.search(file_path.name)
+  return match.group(1) if match else None
 
 def clean_job(job: dict, fetched_at: datetime) -> dict:
   decoded = html.unescape(job["description"])
@@ -103,4 +128,11 @@ def parse_file(file_path: Path | str) -> ParsedSnapshot:
       slug = record.get("slug", "<no slug>") if isinstance(record, dict) else "<not an object>"
       skipped.append(f"{slug}: {type(e).__name__} {e}")
 
-  return ParsedSnapshot(jobs=jobs, skipped=skipped)
+  return ParsedSnapshot(
+    jobs=jobs,
+    skipped=skipped,
+    file_name=file_path.name,
+    run_id=resolve_run_id(file_path, payload),
+    page=payload.get("_page"),
+    fetched_at=fetched_at,
+  )
