@@ -8,6 +8,29 @@ RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 def list_raw_files() -> list[Path]:
     return sorted(RAW_DIR.glob("*.json"))
 
+def load_file(cur, file: Path) -> tuple[int, int]:
+    """Upsert every job in one snapshot. Returns (jobs seen, jobs loaded).
+
+    Each upsert runs inside its own savepoint, so a failing row rolls back
+    only itself. A plain rollback here would also discard every earlier,
+    still-uncommitted row from the same file.
+    """
+    jobs = parse_file(file)
+    loaded = 0
+
+    for job in jobs:
+        cur.execute("SAVEPOINT job_upsert")
+        try:
+            upsert_job(cur, job)
+        except Exception as e:
+            cur.execute("ROLLBACK TO SAVEPOINT job_upsert")
+            print(f"Failed on {job['slug']}: {e}")
+            continue
+        cur.execute("RELEASE SAVEPOINT job_upsert")
+        loaded += 1
+
+    return len(jobs), loaded
+
 def main() -> None:
     connection = get_connection()
     cur = connection.cursor()
@@ -16,18 +39,11 @@ def main() -> None:
 
     try:
         for file in list_raw_files():
-            jobs = parse_file(file)
-            for job in jobs:
-                total += 1
-                try:
-                    upsert_job(cur, job)
-                    successful += 1
-                except Exception as e:
-                    print(f"Failed on {job['slug']}: {e}")
-                    connection.rollback()
-                    continue
+            seen, loaded = load_file(cur, file)
             connection.commit()
-            print(f"{file.name}: {len(jobs)} processed")
+            total += seen
+            successful += loaded
+            print(f"{file.name}: {loaded}/{seen} loaded")
     finally:
         cur.close()
         connection.close()
