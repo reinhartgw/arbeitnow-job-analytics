@@ -62,6 +62,10 @@ def clean_job(job: dict, fetched_at: datetime) -> dict:
   except LangDetectException:
     language = None
 
+  tags = job["tags"]
+  if tags is not None and not isinstance(tags, list):
+    raise TypeError(f"tags is {type(tags).__name__}, expected a list")
+
   return {
     "slug": job["slug"],
     "company_name": job["company_name"],
@@ -70,6 +74,7 @@ def clean_job(job: dict, fetched_at: datetime) -> dict:
     "remote": job["remote"],
     "url": job["url"],
     "job_types": job["job_types"],
+    "tags": tags,
     "location": job["location"],
     "language": language,
     "created_at": datetime.fromtimestamp(job["created_at"], tz=timezone.utc),

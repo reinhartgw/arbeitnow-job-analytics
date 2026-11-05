@@ -1,6 +1,6 @@
 from pathlib import Path
 from clean_jobs import parse_file
-from db import get_connection, upsert_job
+from db import get_connection, replace_job_tags, upsert_job
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
@@ -13,8 +13,9 @@ def load_file(cur, file: Path) -> tuple[int, int, int]:
 
     Returns (records seen, jobs loaded, records skipped as malformed).
 
-    Each upsert runs inside its own savepoint, so a failing row rolls back
-    only itself. A plain rollback here would also discard every earlier,
+    Each job's upsert and tag replacement run inside one savepoint, so a
+    failure rolls back only that job, and never leaves a job row without its
+    tags. A plain rollback here would also discard every earlier,
     still-uncommitted row from the same file.
     """
     parsed = parse_file(file)
@@ -27,6 +28,7 @@ def load_file(cur, file: Path) -> tuple[int, int, int]:
         cur.execute("SAVEPOINT job_upsert")
         try:
             upsert_job(cur, job)
+            replace_job_tags(cur, job["slug"], job["tags"])
         except Exception as e:
             cur.execute("ROLLBACK TO SAVEPOINT job_upsert")
             print(f"Failed on {job['slug']}: {e}")
