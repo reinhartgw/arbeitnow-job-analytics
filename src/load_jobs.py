@@ -8,17 +8,22 @@ RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 def list_raw_files() -> list[Path]:
     return sorted(RAW_DIR.glob("*.json"))
 
-def load_file(cur, file: Path) -> tuple[int, int]:
-    """Upsert every job in one snapshot. Returns (jobs seen, jobs loaded).
+def load_file(cur, file: Path) -> tuple[int, int, int]:
+    """Upsert every job in one snapshot.
+
+    Returns (records seen, jobs loaded, records skipped as malformed).
 
     Each upsert runs inside its own savepoint, so a failing row rolls back
     only itself. A plain rollback here would also discard every earlier,
     still-uncommitted row from the same file.
     """
-    jobs = parse_file(file)
+    parsed = parse_file(file)
+    for reason in parsed.skipped:
+        print(f"Skipped malformed record - {reason}")
+
     loaded = 0
 
-    for job in jobs:
+    for job in parsed.jobs:
         cur.execute("SAVEPOINT job_upsert")
         try:
             upsert_job(cur, job)
@@ -29,26 +34,29 @@ def load_file(cur, file: Path) -> tuple[int, int]:
         cur.execute("RELEASE SAVEPOINT job_upsert")
         loaded += 1
 
-    return len(jobs), loaded
+    return parsed.seen, loaded, len(parsed.skipped)
 
 def main() -> None:
     connection = get_connection()
     cur = connection.cursor()
     total = 0
     successful = 0
+    malformed = 0
 
     try:
         for file in list_raw_files():
-            seen, loaded = load_file(cur, file)
+            seen, loaded, skipped = load_file(cur, file)
             connection.commit()
             total += seen
             successful += loaded
-            print(f"{file.name}: {loaded}/{seen} loaded")
+            malformed += skipped
+            note = f", {skipped} skipped as malformed" if skipped else ""
+            print(f"{file.name}: {loaded}/{seen} loaded{note}")
     finally:
         cur.close()
         connection.close()
 
-    print(f"Done - {successful}/{total} jobs")
+    print(f"Done - {successful}/{total} jobs, {malformed} skipped as malformed")
 
 if __name__ == "__main__":
     main()

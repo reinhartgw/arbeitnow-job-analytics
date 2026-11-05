@@ -3,6 +3,7 @@ import html
 import json
 
 from bs4 import BeautifulSoup
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from langdetect import detect, LangDetectException, DetectorFactory
@@ -15,6 +16,20 @@ RAW_STAMP_RE = re.compile(r"jobs_raw_(\d{8}T\d{6}Z)")
 RAW_STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
 DetectorFactory.seed = 0
+
+# What a malformed record raises inside clean_job: a missing field (KeyError),
+# a null or wrongly typed field (TypeError), or an unusable timestamp
+# (ValueError, OverflowError, OSError).
+CLEAN_ERRORS = (KeyError, TypeError, ValueError, OverflowError, OSError)
+
+@dataclass
+class ParsedSnapshot:
+  jobs: list[dict]
+  skipped: list[str]  # one "<slug>: <error>" line per record that couldn't be cleaned
+
+  @property
+  def seen(self) -> int:
+    return len(self.jobs) + len(self.skipped)
 
 def strip_footer(text: str) -> str:
   return ARBEITNOW_FOOTER_RE.sub("", text).rstrip()
@@ -61,13 +76,26 @@ def clean_job(job: dict, fetched_at: datetime) -> dict:
     "last_seen_at": fetched_at
   }
 
-def parse_file(file_path: Path | str) -> list[dict]:
+def parse_file(file_path: Path | str) -> ParsedSnapshot:
+  """Clean every record in one snapshot.
+
+  A record that can't be cleaned is skipped and reported rather than raised,
+  so one bad record doesn't stop the rest of the file, or the whole load.
+  """
   file_path = Path(file_path)
 
   with open(file_path, "r", encoding="utf-8") as f:
     payload = json.load(f)
 
   fetched_at = resolve_fetched_at(file_path, payload)
-  jobs = payload.get("data", [])
+  jobs: list[dict] = []
+  skipped: list[str] = []
 
-  return [clean_job(job, fetched_at) for job in jobs]
+  for record in payload.get("data", []):
+    try:
+      jobs.append(clean_job(record, fetched_at))
+    except CLEAN_ERRORS as e:
+      slug = record.get("slug", "<no slug>") if isinstance(record, dict) else "<not an object>"
+      skipped.append(f"{slug}: {type(e).__name__} {e}")
+
+  return ParsedSnapshot(jobs=jobs, skipped=skipped)
